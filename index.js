@@ -4,9 +4,11 @@ const Farmacia = require('./models/Farmacia');
 const app = express();
 const datosRaw = require('./datos.json');
 const morgan = require('morgan');
+const cors = require('cors');
 
 app.use(express.json());
 app.use(morgan('dev'));
+app.use(cors());
 
 // Adaptamos los datos a un formato fácil para MongoDB
 const datosFarmacias = datosRaw.results.bindings.map((item) => ({
