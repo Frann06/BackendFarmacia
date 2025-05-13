@@ -155,60 +155,40 @@ app.get('/farmacias-cercanas/top3', async (req, res) => {
 });
 
 
-// Ruta para farmacias en un radio configurable (en km)
-app.get('/farmacias-cercanas/radio', async (req, res) => {
+// Nueva ruta para obtener farmacias dentro de un radio
+app.get('/farmacias-en-radio', async (req, res) => {
   const { lat, long, radio } = req.query;
 
-  if (!lat || !long) {
-    return res.status(400).send('Se requieren latitud y longitud');
+  if (!lat || !long || !radio) {
+    return res.status(400).send('Se requieren latitud, longitud y radio');
   }
 
-  if (!radio || isNaN(radio)) {
-    return res.status(400).send('El radio debe ser un número válido en kilómetros');
-  }
-
+  const latitud = parseFloat(lat);
+  const longitud = parseFloat(long);
   const radioKm = parseFloat(radio);
+  console.log(latitud, longitud, radioKm);
+
+  if (isNaN(latitud) || isNaN(longitud) || isNaN(radioKm)) {
+    return res.status(400).send('Los parámetros de latitud, longitud y radio deben ser números');
+  }
 
   try {
-    const farmacias = await Farmacia.find();
-    
-    // Filtramos las que están dentro del radio especificado
-    const farmaciasEnRadio = farmacias.filter(farmacia => {
+    const todasLasFarmacias = await Farmacia.find();
+    const farmaciasCercanas = todasLasFarmacias.filter(farmacia => {
       const distancia = calcularDistancia(
-        parseFloat(lat),
-        parseFloat(long),
+        latitud,
+        longitud,
         farmacia.geo_lat,
         farmacia.geo_long
       );
       return distancia <= radioKm;
     });
 
-    // Añadimos la distancia a cada farmacia
-    const resultado = farmaciasEnRadio.map(farmacia => {
-      const distancia = calcularDistancia(
-        parseFloat(lat),
-        parseFloat(long),
-        farmacia.geo_lat,
-        farmacia.geo_long
-      );
-      return {
-        ...farmacia._doc,
-        distancia: distancia.toFixed(2)
-      };
-    });
+    res.json(farmaciasCercanas);
 
-    // Ordenamos por distancia (de más cercana a más lejana)
-    resultado.sort((a, b) => a.distancia - b.distancia);
-
-    res.json({
-      radio_km: radioKm,
-      count: resultado.length,
-      farmacias: resultado
-    });
-    
   } catch (error) {
     console.error(error);
-    res.status(500).send('Error al buscar farmacias en el radio');
+    res.status(500).send('Error al buscar farmacias dentro del radio');
   }
 });
 
