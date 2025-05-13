@@ -117,6 +117,101 @@ app.get('/farmacia-mas-cercana', async (req, res) => {
 });
 
 
+app.get('/farmacias-cercanas/top3', async (req, res) => {
+  const { lat, long } = req.query;
+
+  if (!lat || !long) {
+    return res.status(400).send('Se requieren latitud y longitud');
+  }
+
+  try {
+    const farmacias = await Farmacia.find();
+    
+    // Calculamos distancia para cada farmacia y añadimos el campo temporal
+    const farmaciasConDistancia = farmacias.map(farmacia => {
+      const distancia = calcularDistancia(
+        parseFloat(lat),
+        parseFloat(long),
+        farmacia.geo_lat,
+        farmacia.geo_long
+      );
+      return {
+        ...farmacia._doc,
+        distancia: distancia
+      };
+    });
+
+    // Ordenamos por distancia y tomamos las 3 primeras
+    const farmaciasOrdenadas = farmaciasConDistancia
+      .sort((a, b) => a.distancia - b.distancia)
+      .slice(0, 3);
+
+    res.json(farmaciasOrdenadas);
+    
+  } catch (error) {
+    console.error(error);
+    res.status(500).send('Error al buscar farmacias cercanas');
+  }
+});
+
+
+// Ruta para farmacias en un radio configurable (en km)
+app.get('/farmacias-cercanas/radio', async (req, res) => {
+  const { lat, long, radio } = req.query;
+
+  if (!lat || !long) {
+    return res.status(400).send('Se requieren latitud y longitud');
+  }
+
+  if (!radio || isNaN(radio)) {
+    return res.status(400).send('El radio debe ser un número válido en kilómetros');
+  }
+
+  const radioKm = parseFloat(radio);
+
+  try {
+    const farmacias = await Farmacia.find();
+    
+    // Filtramos las que están dentro del radio especificado
+    const farmaciasEnRadio = farmacias.filter(farmacia => {
+      const distancia = calcularDistancia(
+        parseFloat(lat),
+        parseFloat(long),
+        farmacia.geo_lat,
+        farmacia.geo_long
+      );
+      return distancia <= radioKm;
+    });
+
+    // Añadimos la distancia a cada farmacia
+    const resultado = farmaciasEnRadio.map(farmacia => {
+      const distancia = calcularDistancia(
+        parseFloat(lat),
+        parseFloat(long),
+        farmacia.geo_lat,
+        farmacia.geo_long
+      );
+      return {
+        ...farmacia._doc,
+        distancia: distancia.toFixed(2)
+      };
+    });
+
+    // Ordenamos por distancia (de más cercana a más lejana)
+    resultado.sort((a, b) => a.distancia - b.distancia);
+
+    res.json({
+      radio_km: radioKm,
+      count: resultado.length,
+      farmacias: resultado
+    });
+    
+  } catch (error) {
+    console.error(error);
+    res.status(500).send('Error al buscar farmacias en el radio');
+  }
+});
+
 // Iniciar servidor
 const PORT = 3000;
 app.listen(PORT, () => {
