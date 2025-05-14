@@ -10,7 +10,6 @@ app.use(express.json());
 app.use(morgan('dev'));
 app.use(cors());
 
-// Adaptamos los datos a un formato fácil para MongoDB
 const datosFarmacias = datosRaw.results.bindings.map((item) => ({
   uri: item.uri.value,
   geo_long: parseFloat(item.geo_long.value),
@@ -32,8 +31,13 @@ const datosFarmacias = datosRaw.results.bindings.map((item) => ({
   Horario_Extendido_Opens: item.Horario_Extendido_Opens.value,
   Horario_Extendido_Closes: item.Horario_Extendido_Closes.value,
   Descripcion_Horario: item.Descripcion_Horario.value,
-  tieneEnlaceSIG: item.tieneEnlaceSIG.value
+  tieneEnlaceSIG: item.tieneEnlaceSIG.value,
+  location: {
+    type: "Point",
+    coordinates: [parseFloat(item.geo_long.value), parseFloat(item.geo_lat.value)]
+  }
 }));
+
 
 // Conexión a MongoDB
 mongoose.connect('mongodb://localhost:27017/farmaciasdb')
@@ -79,75 +83,59 @@ function calcularDistancia(lat1, lon1, lat2, lon2) {
 
 // Ruta para encontrar la farmacia más cercana
 app.get('/farmacia-mas-cercana', async (req, res) => {
-  const { lat, long } = req.query; // 🔥 Aquí usamos .query en vez de .body
+  res.set('Cache-Control', 'no-store'); // Esto evita que los datos se almacenen en caché
+  const { lat, long } = req.query;
 
-  if (lat === undefined || long === undefined) {
-      return res.status(400).send('Faltan las coordenadas');
+  if (!lat || !long) {
+    return res.status(400).send('Faltan coordenadas');
   }
 
   try {
-      const farmacias = await Farmacia.find();
-
-      if (!farmacias.length) {
-          return res.status(404).send('No hay farmacias disponibles');
-      }
-
-      let farmaciaCercana = farmacias[0];
-      let distanciaMinima = calcularDistancia(lat, long, farmaciaCercana.geo_lat, farmaciaCercana.geo_long);
-
-      for (let i = 1; i < farmacias.length; i++) {
-          const farmacia = farmacias[i];
-          const distancia = calcularDistancia(lat, long, farmacia.geo_lat, farmacia.geo_long);
-
-          if (distancia < distanciaMinima) {
-              distanciaMinima = distancia;
-              farmaciaCercana = farmacia;
+    const farmacia = await Farmacia.findOne({
+      location: {
+        $near: {
+          $geometry: {
+            type: 'Point',
+            coordinates: [parseFloat(long), parseFloat(lat)]
           }
+        }
       }
+    });
 
-      res.json({
-          farmacia: farmaciaCercana,
-          distancia_km: distanciaMinima.toFixed(2)
-      });
-      
+    if (!farmacia) {
+      return res.status(404).send('No se encontró farmacia cercana');
+    }
+
+    res.json(farmacia);
   } catch (error) {
-      console.error(error);
-      res.status(500).send('Error buscando la farmacia más cercana');
+    console.error(error);
+    res.status(500).send('Error al buscar farmacia más cercana');
   }
 });
 
 
+
 app.get('/farmacias-cercanas/top3', async (req, res) => {
+  res.set('Cache-Control', 'no-store'); // Esto evita que los datos se almacenen en caché
   const { lat, long } = req.query;
 
   if (!lat || !long) {
-    return res.status(400).send('Se requieren latitud y longitud');
+    return res.status(400).send('Faltan coordenadas');
   }
 
   try {
-    const farmacias = await Farmacia.find();
-    
-    // Calculamos distancia para cada farmacia y añadimos el campo temporal
-    const farmaciasConDistancia = farmacias.map(farmacia => {
-      const distancia = calcularDistancia(
-        parseFloat(lat),
-        parseFloat(long),
-        farmacia.geo_lat,
-        farmacia.geo_long
-      );
-      return {
-        ...farmacia._doc,
-        distancia: distancia
-      };
-    });
+    const farmacias = await Farmacia.find({
+      location: {
+        $near: {
+          $geometry: {
+            type: 'Point',
+            coordinates: [parseFloat(long), parseFloat(lat)]
+          }
+        }
+      }
+    }).limit(3);
 
-    // Ordenamos por distancia y tomamos las 3 primeras
-    const farmaciasOrdenadas = farmaciasConDistancia
-      .sort((a, b) => a.distancia - b.distancia)
-      .slice(0, 3);
-
-    res.json(farmaciasOrdenadas);
-    
+    res.json(farmacias);
   } catch (error) {
     console.error(error);
     res.status(500).send('Error al buscar farmacias cercanas');
@@ -155,42 +143,45 @@ app.get('/farmacias-cercanas/top3', async (req, res) => {
 });
 
 
+
 // Nueva ruta para obtener farmacias dentro de un radio
 app.get('/farmacias-en-radio', async (req, res) => {
+  res.set('Cache-Control', 'no-store'); // Esto evita que los datos se almacenen en caché
   const { lat, long, radio } = req.query;
 
   if (!lat || !long || !radio) {
-    return res.status(400).send('Se requieren latitud, longitud y radio');
-  }
-
-  const latitud = parseFloat(lat);
-  const longitud = parseFloat(long);
-  const radioKm = parseFloat(radio);
-  console.log(latitud, longitud, radioKm);
-
-  if (isNaN(latitud) || isNaN(longitud) || isNaN(radioKm)) {
-    return res.status(400).send('Los parámetros de latitud, longitud y radio deben ser números');
+    return res.status(400).send('Faltan parámetros');
   }
 
   try {
-    const todasLasFarmacias = await Farmacia.find();
-    const farmaciasCercanas = todasLasFarmacias.filter(farmacia => {
-      const distancia = calcularDistancia(
-        latitud,
-        longitud,
-        farmacia.geo_lat,
-        farmacia.geo_long
-      );
-      return distancia <= radioKm;
+    const farmacias = await Farmacia.find({
+      location: {
+        $geoWithin: {
+          $centerSphere: [
+            [parseFloat(long), parseFloat(lat)],
+            parseFloat(radio) / 6371 // radio en km dividido entre el radio de la Tierra
+          ]
+        }
+      }
     });
 
-    res.json(farmaciasCercanas);
-
+    res.json(farmacias);
   } catch (error) {
     console.error(error);
-    res.status(500).send('Error al buscar farmacias dentro del radio');
+    res.status(500).send('Error al buscar farmacias en el radio');
   }
 });
+
+app.delete('/borrar-todo', async (req, res) => {
+  try {
+    await Farmacia.deleteMany({});
+    res.send('Todas las farmacias eliminadas');
+  } catch (error) {
+    console.error(error);
+    res.status(500).send('Error al borrar farmacias');
+  }
+});
+
 
 // Iniciar servidor
 const PORT = 3000;

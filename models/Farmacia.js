@@ -22,6 +22,23 @@ const FarmaciaSchema = new mongoose.Schema({
   Horario_Extendido_Closes: String,
   Descripcion_Horario: String,
   tieneEnlaceSIG: String,
+
+  // 👇 Campo geoespacial requerido
+  location: {
+    type: {
+      type: String,
+      enum: ['Point'],
+      required: true,
+      default: 'Point'
+    },
+    coordinates: {
+      type: [Number], // [longitud, latitud]
+      required: true
+    }
+  }
 });
+
+// 👇 Índice 2dsphere necesario para búsquedas geoespaciales
+FarmaciaSchema.index({ location: '2dsphere' });
 
 module.exports = mongoose.model('Farmacia', FarmaciaSchema);
